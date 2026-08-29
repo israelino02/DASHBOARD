@@ -5,6 +5,12 @@ GOOGLE ADS/
 *.csv
 _csv-teste.json
 
+# Dados publicados para os links de cliente. Ignorados por padrão: num
+# repositório público, um `git add -A` distraído publicaria o relatório
+# inteiro de um cliente. Para usar os links de cliente, o repositório
+# precisa ser privado — só então remova esta linha.
+data/*.gads.json
+
 # Credenciais nunca entram no repositório. Se um token for commitado,
 # ele fica no histórico do Git mesmo depois de apagado do arquivo —
 # e aí só resta revogá-lo na Meta.
