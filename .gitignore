@@ -1,0 +1,19 @@
+# Exports de cliente ficam fora do repositório. São dados comerciais de
+# terceiros — termos de pesquisa, custos, palavras-chave — e uma vez
+# publicados continuam no histórico do Git mesmo depois de apagados.
+GOOGLE ADS/
+*.csv
+_csv-teste.json
+
+# Credenciais nunca entram no repositório. Se um token for commitado,
+# ele fica no histórico do Git mesmo depois de apagado do arquivo —
+# e aí só resta revogá-lo na Meta.
+.env
+.env.*
+*.token
+clientes.json
+api/_clients.local.js
+
+.vercel/
+node_modules/
+.DS_Store
