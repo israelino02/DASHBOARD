@@ -21,6 +21,10 @@ AG.gads = (function () {
     name:        ['campanha', 'campaign', 'palavrachave', 'keyword', 'termodepesquisa', 'searchterm', 'termo',
                   'dispositivo', 'device', 'local', 'location', 'regiao', 'cidade', 'city',
                   'grupodeanuncios', 'adgroup', 'titulo', 'headline', 'urlfinal', 'finalurl', 'anuncio'],
+    // callImpressions ANTES de impressions: "Impr. chamadas" normaliza para
+    // 'imprchamadas', que começa com 'impr' e seria capturado por impressions
+    // na passada de prefixo se viesse depois.
+    callImpressions: ['imprchamadas', 'imprdechamadas', 'phoneimpressions'],
     impressions: ['impr', 'impressoes', 'impressions', 'imprs'],
     clicks:      ['cliques', 'clicks'],
     ctr:         ['ctr', 'taxadecliques'],
@@ -31,7 +35,28 @@ AG.gads = (function () {
     convValue:   ['valordeconv', 'valorconv', 'convvalue', 'valordeconversao', 'receita', 'revenue'],
     roas:        ['roas', 'valorconvcusto', 'convvaluecost'],
     date:        ['dia', 'day', 'data', 'date'],
+
+    phoneCalls:  ['ligacoestelefonicas', 'ligacoes', 'phonecalls'],
+    // Percentuais de leilão. Nunca somados — ver PONDERADAS abaixo.
+    searchIS:         ['parcimprpesquisa', 'parcelaimprrededepesquisa', 'parcimprrededepesquisa', 'searchimprshare'],
+    searchLostBudget: ['parcimprperdrededepesquisaorc', 'parcimprperdorc', 'searchlostisbudget'],
+    searchLostRank:   ['parcimprperdrededepesquisaclass', 'parcimprperdclass', 'searchlostisrank'],
+    // "1ª" usa o indicador ordinal U+00AA, que não decompõe em "a": a
+    // normalização devolve 'deimpr1posicao', não 'deimpr1aposicao'.
+    absTopIS:         ['deimpr1posicao', 'deimpr1aposicao', 'impr1posicao', 'impr1aposicao',
+                       'absolutetopimpressionrate'],
+    topIS:            ['deimprpartesup', 'imprpartesup', 'topimpressionrate'],
+    searchTopIS:      ['ispartesuppesq', 'searchtopis'],
   };
+
+  /* Somáveis: fazem sentido empilhadas entre dias e entidades. */
+  const ADITIVAS = ['impressions', 'clicks', 'cost', 'conversions', 'convValue',
+                    'phoneCalls', 'callImpressions'];
+  /* Percentuais de leilão: somar 30% de um dia com 40% de outro daria 70%, que
+     não quer dizer nada. A junta correta é a média ponderada por impressões —
+     é assim que o próprio Google consolida esses índices. */
+  const PONDERADAS = ['searchIS', 'searchLostBudget', 'searchLostRank',
+                      'absTopIS', 'topIS', 'searchTopIS'];
 
   /* A ORDEM decide o tipo: vale o primeiro que casar. Relatório de grupo de
      anúncios e de anúncio também trazem a coluna "Campanha", então precisam
@@ -269,6 +294,17 @@ AG.gads = (function () {
     const ctxIdx = headerCells.findIndex((h) => ['campanha', 'campaign'].includes(norm(h)));
     const grpIdx = headerCells.findIndex((h) => ['grupodeanuncios', 'adgroup'].includes(norm(h)));
 
+    /* Dimensões que descrevem a linha sem serem o nome dela. Ficam em campos
+       próprios para virarem coluna na tabela e recorte nos gráficos. */
+    const idxDe = (nomes) => headerCells.findIndex((h) => nomes.includes(norm(h)));
+    const DIMS = {
+      adType:    idxDe(['tipodeanuncio', 'adtype']),
+      matchType: idxDe(['tipodecorrespondencia', 'tipodecorresp', 'matchtype']),
+      cidade:    idxDe(['cidade', 'city']),
+      regiao:    idxDe(['regiao', 'region', 'estado']),
+      pais:      idxDe(['pais', 'country']),
+    };
+
     const rows = [];
     corpo.forEach((cells) => {
       const name = (cells[cols.name] || '').trim();
@@ -290,14 +326,28 @@ AG.gads = (function () {
       const conversions = g('conversions'), convValue = g('convValue');
       const date = cols.date != null ? parseDate(cells[cols.date]) : null;
 
-      rows.push({
+      const linha = {
         name, contexto, campanha, grupo, date,
         impressions, clicks, cost, conversions, convValue,
+        phoneCalls: g('phoneCalls'),
+        callImpressions: g('callImpressions'),
+        // Percentuais do leilão. "< 10%" vira 10 — a Google esconde o valor
+        // exato abaixo desse piso, então o número é um teto, não a medida.
+        searchIS: g('searchIS'),
+        searchLostBudget: g('searchLostBudget'),
+        searchLostRank: g('searchLostRank'),
+        absTopIS: g('absTopIS'),
+        topIS: g('topIS'),
+        searchTopIS: g('searchTopIS'),
         ctr: cols.ctr != null ? g('ctr') : razao(clicks, impressions, 100),
         avgCpc: cols.avgCpc != null ? g('avgCpc') : razao(cost, clicks),
         costPerConv: cols.costPerConv != null ? g('costPerConv') : razao(cost, conversions),
         roas: cols.roas != null ? g('roas') : razao(convValue, cost),
+      };
+      Object.keys(DIMS).forEach((d) => {
+        linha[d] = DIMS[d] >= 0 && DIMS[d] !== cols.name ? (cells[DIMS[d]] || '').trim() : '';
       });
+      rows.push(linha);
     });
 
     return { kind, kindLabel: KIND_LABEL[kind], rows: aggregate(rows), columns: Object.keys(cols) };
@@ -309,39 +359,51 @@ AG.gads = (function () {
    *  tabela mostra a campanha repetida 29 vezes, cada uma com um pedaço do
    *  investimento. As métricas derivadas são recalculadas do total — média de
    *  CPC entre segmentos não é o CPC do conjunto. */
+  /** Junta um conjunto de linhas numa só, respeitando a natureza de cada
+   *  métrica: aditivas somam, percentuais de leilão viram média ponderada por
+   *  impressões, e as derivadas são recalculadas do total — média de CPC entre
+   *  linhas não é o CPC do conjunto. */
+  function combinar(linhas, base) {
+    const r = Object.assign({}, base || linhas[0]);
+
+    ADITIVAS.forEach((f) => {
+      r[f] = linhas.every((x) => x[f] == null) ? null : U.sum(linhas, (x) => U.num(x[f]));
+    });
+
+    PONDERADAS.forEach((f) => {
+      const validas = linhas.filter((x) => x[f] != null);
+      if (!validas.length) { r[f] = null; return; }
+      const peso = U.sum(validas, (x) => U.num(x.impressions));
+      // Sem impressões para pesar, cai na média simples — melhor que descartar.
+      r[f] = peso > 0
+        ? U.sum(validas, (x) => U.num(x[f]) * U.num(x.impressions)) / peso
+        : U.sum(validas, (x) => U.num(x[f])) / validas.length;
+    });
+
+    r.ctr = razao(r.clicks, r.impressions, 100);
+    r.avgCpc = razao(r.cost, r.clicks);
+    r.costPerConv = razao(r.cost, r.conversions);
+    r.roas = razao(r.convValue, r.cost);
+    return r;
+  }
+
   function aggregate(rows) {
     const mapa = new Map();
     rows.forEach((r) => {
       // A data entra na chave: somar linhas de dias diferentes destruiria
       // exatamente a série diária que o export segmentado veio trazer.
       const k = r.name + '\u0000' + (r.contexto || '') + '\u0000' + (r.date || '');
-      const a = mapa.get(k);
-      if (!a) { mapa.set(k, Object.assign({}, r)); return; }
-      ['impressions', 'clicks', 'cost', 'conversions', 'convValue']
-        .forEach((f) => { a[f] = soma(a[f], r[f]); });
+      if (!mapa.has(k)) mapa.set(k, []);
+      mapa.get(k).push(r);
     });
-    return Array.from(mapa.values()).map((r) => Object.assign(r, {
-      ctr: razao(r.clicks, r.impressions, 100),
-      avgCpc: razao(r.cost, r.clicks),
-      costPerConv: razao(r.cost, r.conversions),
-      roas: razao(r.convValue, r.cost),
-    }));
+    return Array.from(mapa.values()).map((linhas) => combinar(linhas));
   }
 
   /** Totais consolidados a partir do relatório de campanhas
    *  (é o único que representa a conta inteira sem dupla contagem). */
   function totals(rows) {
-    // Se NENHUMA linha informou o campo, o total também é "não informado".
-    const somar = (f) => (rows.every((r) => r[f] == null) ? null : U.sum(rows, (r) => U.num(r[f])));
-    const cost = somar('cost'), clicks = somar('clicks'), impressions = somar('impressions');
-    const conversions = somar('conversions'), convValue = somar('convValue');
-    return {
-      cost, clicks, impressions, conversions, convValue,
-      ctr: razao(clicks, impressions, 100),
-      avgCpc: razao(cost, clicks),
-      costPerConv: razao(cost, conversions),
-      roas: razao(convValue, cost),
-    };
+    if (!rows.length) return combinar([{}], {});
+    return combinar(rows, {});
   }
 
   /** Guarda o relatório dentro do seu tipo, POR ARQUIVO.
@@ -400,19 +462,12 @@ AG.gads = (function () {
   function daily(rows) {
     const porDia = new Map();
     rows.filter((r) => r.date).forEach((r) => {
-      const a = porDia.get(r.date) || { date: r.date, cost: null, clicks: null,
-                                        impressions: null, conversions: null, convValue: null };
-      ['cost', 'clicks', 'impressions', 'conversions', 'convValue']
-        .forEach((f) => { a[f] = soma(a[f], r[f]); });
-      porDia.set(r.date, a);
+      if (!porDia.has(r.date)) porDia.set(r.date, []);
+      porDia.get(r.date).push(r);
     });
-    return Array.from(porDia.values())
-      .sort((a, b) => (a.date < b.date ? -1 : 1))
-      .map((d) => Object.assign(d, {
-        ctr: razao(d.clicks, d.impressions, 100),
-        avgCpc: razao(d.cost, d.clicks),
-        costPerConv: razao(d.cost, d.conversions),
-      }));
+    return Array.from(porDia.entries())
+      .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+      .map(([date, linhas]) => combinar(linhas, { date }));
   }
 
   const hasDates = (rows) => rows.some((r) => r.date);
@@ -464,6 +519,6 @@ AG.gads = (function () {
   }
 
   return { parse, totals, ingest, rowsOf, fileNames, filterByCampaign, filterByRange,
-           aggregate, collapseDates, daily, hasDates, parseDate, gruposDe, filterByGroup,
-           semGrupo, KIND_LABEL, parseNum, norm };
+           aggregate, combinar, collapseDates, daily, hasDates, parseDate, gruposDe,
+           filterByGroup, semGrupo, ADITIVAS, PONDERADAS, KIND_LABEL, parseNum, norm };
 })();

@@ -144,6 +144,37 @@ total, porque a média entre segmentos não é a métrica do conjunto.
 Google, por exemplo, não traz coluna de impressões. Mostrar zero ali afirmaria
 que a campanha não teve nenhuma, que é diferente de "esse export não informa".
 
+### Métricas reconhecidas
+
+Além de Impr., Cliques, CTR, CPC méd., Custo, Conversões, Custo/conv., Valor de
+conv. e Valor conv./custo, o parser lê, quando o export as traz:
+
+**Ligações telefônicas · Impr. de chamadas · % de impr. (1ª posição) ·
+% de impr. (parte sup.) · Parc impr pesquisa · Parc impr perd rede de pesquisa
+(orç) · Parc impr perd rede de pesquisa (class.) · IS parte sup. pesq.**
+
+Cada uma só aparece na tela se o arquivo a trouxer — um cartão com "—" para
+cada coluna ausente encheria a página de nada.
+
+**Os percentuais de leilão não são somados.** Somar 30% de um dia com 40% de
+outro daria 70%, que não quer dizer nada. Eles viram média ponderada pelas
+impressões, que é como o próprio Google consolida esses índices. Quando o export
+traz `< 10%`, o número lido é 10 — a Google esconde o valor exato abaixo desse
+piso, então trate como teto.
+
+### Dimensões
+
+As tabelas ganham coluna conforme o export informa: **Grupo**, **Tipo de
+anúncio**, **Correspondência** e **Região**. Cada uma aparece só onde existe.
+`RESPONSIVE_SEARCH_AD` e `PHRASE` são traduzidos para "Pesquisa responsivo" e
+"Frase".
+
+### Gráficos de rosca
+
+Investimento por dispositivo e por cidade saem em rosca quando há **três ou mais
+categorias**. Com uma ou duas, viram números com a porcentagem — um anel de duas
+fatias lê pior que "92,9% no celular".
+
 ### Campanha em foco
 
 O campo no topo da página filtra tudo para uma campanha só. Deixe vazio para ver

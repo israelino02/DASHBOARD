@@ -424,6 +424,27 @@ AG.pages = AG.pages || {};
 
       /* "—" para o que o relatório não informa; 0 diria que o valor é zero. */
       const nn = (v, f) => (v == null ? '—' : f(v));
+      const pct = (v) => U.fmt.pct(v, 1);
+
+      /* O Google exporta esses dois em caixa alta e em inglês. */
+      const TIPO_ANUNCIO = {
+        RESPONSIVE_SEARCH_AD: 'Pesquisa responsivo',
+        EXPANDED_TEXT_AD: 'Texto expandido',
+        CALL_ONLY_AD: 'Somente chamada',
+        RESPONSIVE_DISPLAY_AD: 'Display responsivo',
+        TEXT_AD: 'Texto',
+      };
+      const CORRESPONDENCIA = {
+        EXACT: 'Exata', PHRASE: 'Frase', BROAD: 'Ampla',
+        NEAR_EXACT: 'Exata (variação)', NEAR_PHRASE: 'Frase (variação)',
+      };
+      const humanizar = (mapa) => (v) => {
+        if (!v) return '—';
+        const k = String(v).toUpperCase().replace(/[\s.-]/g, '_');
+        return mapa[k] || String(v);
+      };
+      const tipoAnuncio = humanizar(TIPO_ANUNCIO);
+      const correspondencia = humanizar(CORRESPONDENCIA);
 
       /* Com export segmentado por dia, o seletor de período do topo passa a
          valer aqui também. Sem data na linha, não há como recortar — ela passa. */
@@ -508,8 +529,27 @@ AG.pages = AG.pages || {};
           { label: 'CPA', value: t.conversions ? nn(t.costPerConv, U.fmt.money) : '—' },
           { label: 'Receita', value: t.convValue ? U.fmt.money(t.convValue) : '—' },
           { label: 'ROAS', value: t.convValue ? U.fmt.roas(t.roas) : '—' },
-        ].forEach((k) => kpis.appendChild(UI.kpi(k)));
+          // Métricas de leilão e de chamada: só aparecem se o export as trouxe.
+          // Um cartão com "—" para cada coluna ausente encheria a tela de nada.
+          { label: 'Ligações telefônicas', value: nn(t.phoneCalls, U.fmt.int), só: t.phoneCalls != null },
+          { label: 'Impr. de chamadas', value: nn(t.callImpressions, U.fmt.int), só: t.callImpressions != null },
+          { label: 'Parc. impr. pesquisa', value: nn(t.searchIS, pct), só: t.searchIS != null,
+            hint: 'quanto do leilão você pegou' },
+          { label: 'Impr. perdidas (orçam.)', value: nn(t.searchLostBudget, pct), só: t.searchLostBudget != null,
+            hint: 'deixou de aparecer por verba' },
+          { label: 'Impr. perdidas (class.)', value: nn(t.searchLostRank, pct), só: t.searchLostRank != null,
+            hint: 'deixou de aparecer por qualidade/lance' },
+          { label: '% impr. 1ª posição', value: nn(t.absTopIS, pct), só: t.absTopIS != null },
+          { label: '% impr. parte superior', value: nn(t.topIS, pct), só: t.topIS != null },
+          { label: 'IS parte sup. pesquisa', value: nn(t.searchTopIS, pct), só: t.searchTopIS != null },
+        ].filter((k) => k.só !== false).forEach((k) => kpis.appendChild(UI.kpi(k)));
         root.appendChild(kpis);
+        if (t.searchIS != null || t.absTopIS != null) {
+          root.appendChild(UI.note(
+            'Os percentuais de leilão não se somam entre dias nem entre campanhas: o valor mostrado é a ' +
+            'média ponderada pelas impressões, que é como o Google consolida esses índices. ' +
+            'Quando o export traz "< 10%", o número lido é 10 — a Google esconde o valor exato abaixo desse piso.', 'info'));
+        }
       }
 
       /* Onde o dinheiro está: grupos de anúncios, se houver; senão campanhas */
@@ -526,6 +566,47 @@ AG.pages = AG.pages || {};
           fmt: U.fmt.moneyShort, fmtTip: U.fmt.money, height: Math.max(160, top.length * 34 + 20),
         });
         root.appendChild(c);
+      }
+
+      /* Roscas: parte-do-todo em recortes de poucas fatias. Dispositivo e
+         cidade servem — dá para ler a divisão de relance. Grupo de anúncios
+         não entra aqui: com dois grupos, uma rosca de duas fatias diz menos
+         que as duas barras que já estão acima. */
+      const roscas = [
+        { kind: 'devices', titulo: 'Investimento por dispositivo' },
+        { kind: 'locations', titulo: 'Investimento por cidade' },
+      ].filter((r) => stored.reports[r.kind] && linhasDe(r.kind).length);
+
+      if (roscas.length) {
+        const linhaRoscas = UI.grid('grid-2');
+        roscas.forEach((r) => {
+          const dados = AG.gads.collapseDates(linhasDe(r.kind))
+            .filter((x) => U.num(x.cost) > 0)
+            .sort(U.byDesc((x) => x.cost));
+          if (!dados.length) return;
+          const card = UI.card(r.titulo, {
+            subtitle: 'soma do período', collapsible: true, collapseId: 'gads-rosca-' + r.kind });
+
+          if (dados.length >= 3) {
+            C.donut(card.body, {
+              slices: dados.map((x) => ({ label: x.name, value: x.cost })),
+              fmt: U.fmt.money, centerLabel: 'INVESTIDO', height: 250,
+            });
+          } else {
+            // Com uma ou duas categorias o anel não diz nada que o número já
+            // não diga — e um anel de duas fatias lê pior que a porcentagem.
+            const total = U.sum(dados, (x) => x.cost) || 1;
+            const tiles = UI.grid('grid-kpi');
+            dados.forEach((x) => tiles.appendChild(UI.kpi({
+              label: x.name,
+              value: U.fmt.pct((x.cost / total) * 100, 1),
+              hint: U.fmt.money(x.cost),
+            })));
+            card.body.appendChild(tiles);
+          }
+          linhaRoscas.appendChild(card);
+        });
+        if (linhaRoscas.childNodes.length) root.appendChild(linhaRoscas);
       }
 
       /* Série diária — só existe se algum export veio segmentado por dia */
@@ -623,6 +704,15 @@ AG.pages = AG.pages || {};
             ...(linhas.some((r) => r.grupo)
               ? [{ key: 'grupo', label: 'Grupo',
                    render: (r) => UI.badge(r.grupo || '—', 'neutral') }] : []),
+            // Dimensões que descrevem a linha, cada uma só onde existe.
+            ...(linhas.some((r) => r.adType)
+              ? [{ key: 'adType', label: 'Tipo de anúncio',
+                   render: (r) => UI.badge(tipoAnuncio(r.adType), 'neutral') }] : []),
+            ...(linhas.some((r) => r.matchType)
+              ? [{ key: 'matchType', label: 'Correspondência',
+                   render: (r) => UI.badge(correspondencia(r.matchType), 'neutral') }] : []),
+            ...(linhas.some((r) => r.regiao)
+              ? [{ key: 'regiao', label: 'Região' }] : []),
             { key: 'cost', label: 'Custo', align: 'right', fmt: (v) => nn(v, U.fmt.money) },
             { key: 'impressions', label: 'Impressões', align: 'right', fmt: (v) => nn(v, U.fmt.int) },
             { key: 'clicks', label: 'Cliques', align: 'right', fmt: (v) => nn(v, U.fmt.int) },
@@ -631,6 +721,15 @@ AG.pages = AG.pages || {};
             { key: 'conversions', label: 'Conversões', align: 'right', fmt: (v) => nn(v, U.fmt.dec) },
             { key: 'costPerConv', label: 'CPA', align: 'right', fmt: (v, r) => (r.conversions ? nn(v, U.fmt.money) : '—') },
             { key: 'roas', label: 'ROAS', align: 'right', fmt: (v, r) => (r.convValue ? U.fmt.roas(v) : '—') },
+            // Métricas extras, só nas tabelas cujo export as trouxe.
+            ...(linhas.some((r) => r.phoneCalls != null)
+              ? [{ key: 'phoneCalls', label: 'Ligações', align: 'right', fmt: (v) => nn(v, U.fmt.int) }] : []),
+            ...(linhas.some((r) => r.searchIS != null)
+              ? [{ key: 'searchIS', label: 'Parc. impr.', align: 'right', fmt: (v) => nn(v, pct) }] : []),
+            ...(linhas.some((r) => r.absTopIS != null)
+              ? [{ key: 'absTopIS', label: '% 1ª pos.', align: 'right', fmt: (v) => nn(v, pct) }] : []),
+            ...(linhas.some((r) => r.topIS != null)
+              ? [{ key: 'topIS', label: '% topo', align: 'right', fmt: (v) => nn(v, pct) }] : []),
           ],
           rows: linhas,
         });
